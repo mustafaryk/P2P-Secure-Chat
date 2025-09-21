@@ -8,11 +8,26 @@
 #include <stdlib.h>
 
 fd_set all_sockets;				//these variables are global to help with helper functions
-fd_set ready_read_sockets; 
+fd_set ready_read_sockets;
+fd_set ready_write_sockets;
 int sfd;
-int cfd = -1;
-int client_request_limit = 100;
+int cfd;
+int client_request_limit = 800;
 int max_client_queue = 5;
+
+int encrypt(char* buffer){
+	return 0;
+}
+int decrypt(char* buffer){
+	printf("Peer: %s", buffer);
+}
+
+void disconnect(){
+	printf("Peer has disconnected.\n");
+	FD_CLR(cfd, &all_sockets);
+	close(cfd);
+	cfd = -1;
+}
 
 void connect_as_server(){		//we as a peer are connecting as a server (waiting for a client)
 	struct sockaddr_in ca;
@@ -22,7 +37,7 @@ void connect_as_server(){		//we as a peer are connecting as a server (waiting fo
 	FD_SET(cfd, &all_sockets);
 	char dot_notation[INET_ADDRSTRLEN];
 	inet_ntop(AF_INET, &(&ca)->sin_addr, dot_notation, INET_ADDRSTRLEN);
-	printf("Success in connecting to client with IP address: %s | Port Number: %d\n", dot_notation, ntohs(ca.sin_port));
+	printf("Success in connecting to client with IP address: %s and with port number: %d\n", dot_notation, ntohs(ca.sin_port));
 	return;
 }
 
@@ -32,35 +47,20 @@ void connect_as_client(char* ip_address,int port_number){
     memset(&ca, 0, sizeof(struct sockaddr_in));      
     ca.sin_family = AF_INET;   
 	ca.sin_port = htons(port_number);
-	ca.sin_addr.s_addr = htonl(INADDR_ANY);
 
 	if (inet_pton(AF_INET, ip_address, &ca.sin_addr) == 0){
-		perror("That's not an IPv4 address");
+		perror("Not an IPv4 address");
 		disconnect();
 		return;
 	}
 	if (connect(cfd, (struct sockaddr *)&ca, sizeof(struct sockaddr_in)) == -1){
-		printf("Error in trying to connect to server with IP address: %s and with port number: %d\n", ip_address, port_number);
+		printf("Error in connecting to server with IP address: %s and with port number: %d\n", ip_address, port_number);
 		disconnect();
 		return;
 	}
 	printf("Success in connecting to server with IP address: %s and with port number: %d\n", ip_address, port_number);
 	FD_SET(cfd, &all_sockets);
 	
-}
-
-int encrypt(char* buffer){
-	return 0;
-}
-int decrypt(char* buffer){
-	printf("Client: %s", buffer);
-}
-
-void disconnect(){
-	printf("Client has disconnected.\n");
-	FD_CLR(cfd, &all_sockets);
-	close(cfd);
-	cfd = -1;
 }
 
 void write_to_client(){           //helper function to write to our client  
@@ -75,7 +75,7 @@ void write_to_client(){           //helper function to write to our client
 }
 
 void handle_client_data(){
-	char buffer[128];   
+	char buffer[1028];   
 	int condition = 0;  
 	ssize_t total_bytes = 0;  
   
@@ -99,16 +99,18 @@ void handle_client_data(){
 
   
 int main(int argc, char **argv){
+	cfd = -1;
+
 	if (argc < 2){  
-        printf("Need port number for host\n");  
+        printf("Need port number for you to host on\n");  
         return -1;  
     }
 	if (argc == 3){  
-        printf("Need port number for client\n");  
+        printf("Need port number of peer\n");  
         return -1;  
     }
 
-    sfd = socket(AF_INET, SOCK_STREAM, 0);
+    sfd = socket(AF_INET, SOCK_STREAM, 0);				//initializing ourselves as a server
     FD_ZERO(&all_sockets);
 	FD_SET(STDIN_FILENO, &all_sockets);
     FD_SET(sfd, &all_sockets);  
@@ -128,35 +130,35 @@ int main(int argc, char **argv){
         return -1;  
     }  
   
-    if (listen(sfd, max_client_queue) == -1) {  
+    if (listen(sfd, max_client_queue) == -1){
         perror("listen failed");  
         return -1;  
-    }  
+    }
 	
 	if (argc >= 4){
-		connect_as_client(argv[2] ,atoi(argv[3]));		//second argument is peer ip, third argument is peers port number
+		connect_as_client(argv[2] , atoi(argv[3]));		//second argument is peer ip, third argument is peers port number
 	}
-  
+	
     for(;;){		//loop
 	
+		if (cfd == -1){				//we dont have a peer
+			connect_as_server();
+		}
+	
 		ready_read_sockets = all_sockets;
+		ready_write_sockets = all_sockets;
 		
 		if (select(FD_SETSIZE, &ready_read_sockets, NULL, NULL, NULL) == -1){  
             perror("select failed for reading and writing");  
             return -1;  
         }
 		
-		if (cfd == -1){				//we dont have a peer
-			connect_as_server();
-		}
-		
-		if (FD_ISSET(cfd, &ready_read_sockets) && cfd != -1){				//peer has sent data
+		if (FD_ISSET(cfd, &ready_read_sockets)){				//peer has sent data
 			handle_client_data();
 		}
 		
-		if (FD_ISSET(STDIN_FILENO,  &ready_read_sockets) && cfd != -1){		//we have data ready to send to peer
+		if (FD_ISSET(STDIN_FILENO,  &ready_read_sockets) && cfd !=-1){		//we have data ready to send to peer
 			write_to_client();
 		}
-		
 	}
 }
