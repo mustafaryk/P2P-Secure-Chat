@@ -13,17 +13,19 @@ fd_set ready_write_sockets;
 int sfd;
 int cfd = -1;
 int client_request_limit = 100;
+int max_client_queue = 5;
 
 int encrypt(char* buffer){
 	return 0;
 }
 int decrypt(char* buffer){
-	printf("Client:%s", buffer);
+	printf("Client: %s", buffer);
 }
 
 void disconnect(){
 	printf("Client has disconnected.\n");
 	FD_CLR(cfd, &all_sockets);
+	close(cfd);
 	cfd = -1;
 }
 
@@ -47,18 +49,18 @@ void handle_client_data(){
 		ssize_t bytes = read(cfd, &buffer[total_bytes], sizeof(buffer) - total_bytes);    //read whatever client wants to send  
 		if (bytes <= 0 || bytes > client_request_limit || total_bytes > client_request_limit){       //naughty client trying to send more than 100 bytes or has closed on their end  
 			disconnect();		//disconnect
-			break;
+			return;
 		}  
 		total_bytes = total_bytes + bytes;  
 		buffer[total_bytes] = 0;                //null terminate our buffer as we will use string methods later on it  
 		if (buffer[total_bytes - 1] == '\n'){           //last byte read has to be newline for us to know they have finished their request  
 			condition = 1;  
 		}  
-	}	  
-	//handle whatever request client sent  
-	if (condition == 1){
-		decrypt(buffer);	
 	}
+	
+	//decrypt whatever request client sent  
+	decrypt(buffer);	
+	
 }
 
   
@@ -94,7 +96,7 @@ int main(int argc, char **argv){
         return -1;  
     }  
   
-    if (listen(sfd, FD_SETSIZE) == -1) {  
+    if (listen(sfd, max_client_queue) == -1) {  
         perror("listen failed");  
             return -1;  
     }  
@@ -125,7 +127,7 @@ int main(int argc, char **argv){
 		ready_write_sockets = all_sockets;
 		
 		if (select(FD_SETSIZE, &ready_read_sockets, &ready_write_sockets, NULL, NULL) == -1){  
-            perror("select in read");  
+            perror("select failed");  
              return -1;  
         }
 		
