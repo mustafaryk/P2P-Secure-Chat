@@ -9,7 +9,6 @@
 
 fd_set all_sockets;				//these variables are global to help with helper functions
 fd_set ready_read_sockets; 
-fd_set ready_write_sockets;
 int sfd;
 int cfd = -1;
 int client_request_limit = 100;
@@ -28,7 +27,7 @@ void connect_as_server(){		//we as a peer are connecting as a server (waiting fo
 }
 
 void connect_as_client(char* ip_address,int port_number){
-	
+	cfd = socket(AF_INET, SOCK_STREAM, 0);
 	struct sockaddr_in ca;
     memset(&ca, 0, sizeof(struct sockaddr_in));      
     ca.sin_family = AF_INET;   
@@ -37,12 +36,12 @@ void connect_as_client(char* ip_address,int port_number){
 
 	if (inet_pton(AF_INET, ip_address, &ca.sin_addr) == 0){
 		perror("That's not an IPv4 address");
-		cfd = -1;
+		disconnect();
 		return;
 	}
 	if (connect(cfd, (struct sockaddr *)&ca, sizeof(struct sockaddr_in)) == -1){
 		printf("Error in trying to connect to server with IP address: %s and with port number: %d\n", ip_address, port_number);
-		cfd = -1;
+		disconnect();
 		return;
 	}
 	printf("Success in connecting to server with IP address: %s and with port number: %d\n", ip_address, port_number);
@@ -66,7 +65,7 @@ void disconnect(){
 
 void write_to_client(){           //helper function to write to our client  
     char message[1024];  
-    if (fgets(message, sizeof(message), stdin) == 0){     	//read message from standard input
+    if (fgets(message, sizeof(message), stdin) == NULL){     	//read message from standard input
 		return;
     }  
 	encrypt(message);
@@ -110,19 +109,18 @@ int main(int argc, char **argv){
     }
 
     sfd = socket(AF_INET, SOCK_STREAM, 0);
-	cfd = socket(AF_INET, SOCK_STREAM, 0);
     FD_ZERO(&all_sockets);
 	FD_SET(STDIN_FILENO, &all_sockets);
     FD_SET(sfd, &all_sockets);  
   
-    struct sigaction myaction;      //so that writing to disconnected client doesnt end server  
+    struct sigaction myaction;      //so that writing to disconnected peer doesnt end server  
     myaction.sa_handler = SIG_IGN;  
     sigaction(SIGPIPE, &myaction, NULL);  
   
 	struct sockaddr_in a;
     memset(&a, 0, sizeof(struct sockaddr_in));      //preamble for setting up server down below  
     a.sin_family = AF_INET;  
-    a.sin_port = htons(atoi(argv[1])); // first argument is port number  
+    a.sin_port = htons(atoi(argv[1])); // first argument is your port number  
     a.sin_addr.s_addr = htonl(INADDR_ANY);  
   
     if (bind(sfd, (struct sockaddr *)&a, sizeof(struct sockaddr_in)) == -1){  
@@ -136,18 +134,14 @@ int main(int argc, char **argv){
     }  
 	
 	if (argc >= 4){
-		connect_as_client(argv[2] ,atoi(argv[3]));
-	}
-	else{
-		cfd = -1;
+		connect_as_client(argv[2] ,atoi(argv[3]));		//second argument is peer ip, third argument is peers port number
 	}
   
     for(;;){		//loop
 	
 		ready_read_sockets = all_sockets;
-		ready_write_sockets = all_sockets;
 		
-		if (select(FD_SETSIZE, &ready_read_sockets, &ready_write_sockets, NULL, NULL) == -1){  
+		if (select(FD_SETSIZE, &ready_read_sockets, NULL, NULL, NULL) == -1){  
             perror("select failed for reading and writing");  
             return -1;  
         }
