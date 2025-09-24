@@ -6,21 +6,29 @@
 #include <unistd.h>  
 #include <signal.h>   
 #include <stdlib.h>
+#include <openssl/evp.h>
+#include <openssl/rand.h>
+#include <openssl/pem.h>
+#include <openssl/err.h>
+#include <openssl/bio.h>
+#include <openssl/crypto.h>
+#include "encryption.h"
+#include <openssl/ssl.h>
+
 
 fd_set all_sockets;				//these variables are global to help with helper functions
 fd_set ready_read_sockets;
 fd_set ready_write_sockets;
 int sfd;
 int cfd;
-int client_request_limit = 800;
+int client_request_limit = 1600;
 int max_client_queue = 5;
 
-int encrypt(char* buffer){
-	return 0;
-}
-int decrypt(char* buffer){
-	printf("Peer: %s", buffer);
-}
+EVP_PKEY* your_public_key;
+EVP_PKEY* your_private_key;
+EVP_PKEY* their_public_key;
+unsigned char* session_key;
+unsigned char iv[16];
 
 void disconnect(){
 	printf("Peer has disconnected.\n");
@@ -30,18 +38,87 @@ void disconnect(){
 	printf("Waiting for connection as a server now, if you would like to connect type: \"CONNECT:IP_ADDRESS PORT_NUMBER\"\n");
 }
 
-void connect_as_server(){		//we as a peer are connecting as a server (waiting for a client)
+int connect_as_server(){		//we as a peer are connecting as a server (waiting for a client)
 	struct sockaddr_in ca;
 	socklen_t sinlen = sizeof(struct sockaddr_in);
-	cfd = accept(sfd, (struct sockaddr *)&ca, &sinlen);				//this is blocking, will wait untill a client comes to connect
+	cfd = accept(sfd, (struct sockaddr *)&ca, &sinlen);
 	FD_SET(cfd, &all_sockets);
+	
+	unsigned char message[6] = "hello";
+	unsigned char *pub_buf = NULL;
+	int public_key_length = i2d_PUBKEY(your_public_key, &pub_buf); // DER encode
+
+	if (public_key_length <= 0) {
+		disconnect();
+		perror("Failed to encode public key");
+		return 1;
+	}
+
+	uint32_t total_length = htonl(sizeof(message) + public_key_length);		//handshake algo
+	write(cfd, &total_length, sizeof(total_length));
+	write(cfd, message, sizeof(message));
+	write(cfd, pub_buf, public_key_length);
+	OPENSSL_free(pub_buf);
+	
+	uint32_t length_of_data;
+	unsigned char data_sent[4096];
+	unsigned char first_5_characters_and_null[6];
+	read(cfd, &length_of_data, sizeof(length_of_data));
+	read(cfd, first_5_characters_and_null, sizeof(first_5_characters_and_null));
+	if (strcmp(first_5_characters_and_null, "hello") != 0){
+		perror("handshake algo went bad");
+		disconnect();
+		return 1;
+	}
+	
+	int client_pub_len = length_of_data - sizeof(first_5_characters_and_null);
+    unsigned char *client_pub_buf = malloc(client_pub_len);
+    if (!client_pub_buf) {
+        perror("malloc failed");
+        disconnect();
+        return 1;
+    }
+
+    read(cfd, client_pub_buf, client_pub_len);
+
+    const unsigned char *p = client_pub_buf;
+    their_public_key = d2i_PUBKEY(NULL, &p, client_pub_len);
+    free(client_pub_buf);
+    if (!their_public_key) {
+        perror("Failed to decode client public key");
+        disconnect();
+        return 1;
+    }
+	
+	session_key = calloc(32, sizeof(unsigned char));
+	if(make_symmetric_key(session_key, 32) != 0){
+		perror("Couldnt generate symmetric key");
+		disconnect();
+		return 1;
+	}
+	
+	unsigned char* cipher_symmetric_key;
+	int cipher_symmetric_key_length;
+	int session_key_length = 32*sizeof(unsigned char);
+	if (asymmetric_encrypt(their_public_key, session_key, session_key_length, &cipher_symmetric_key, &cipher_symmetric_key_length) != 0){
+		perror("problem in assymetricly encrypting the session key");
+		disconnect();
+		return 1;
+	}
+	write(cfd, &cipher_symmetric_key_length, sizeof(cipher_symmetric_key_length));
+	write(cfd, cipher_symmetric_key, cipher_symmetric_key_length);
+	free(cipher_symmetric_key);
+	printf("Length of encrypted symmetric key server: %d\n", cipher_symmetric_key_length);
+	
 	char dot_notation[INET_ADDRSTRLEN];
 	inet_ntop(AF_INET, &(&ca)->sin_addr, dot_notation, INET_ADDRSTRLEN);
-	printf("Success in connecting to client with IP address: %s and with port number: %d, if you would like to disconnect type: \"DISCONNECT\"\n\n", dot_notation, ntohs(ca.sin_port));
-	return;
+
+	printf("Success in connecting to client with IP address: %s and with port number: %d\n If you would like to disconnect type: \"DISCONNECT\"\n\n", dot_notation, ntohs(ca.sin_port));
+	
+	return 0;
 }
 
-void connect_as_client(char* ip_address,int port_number){
+int connect_as_client(char* ip_address,int port_number){
 	cfd = socket(AF_INET, SOCK_STREAM, 0);
 	struct sockaddr_in ca;
     memset(&ca, 0, sizeof(struct sockaddr_in));      
@@ -51,20 +128,75 @@ void connect_as_client(char* ip_address,int port_number){
 	if (inet_pton(AF_INET, ip_address, &ca.sin_addr) == 0){
 		perror("Not an IPv4 address");
 		disconnect();
-		return;
+		return 1;
 	}
 	if (connect(cfd, (struct sockaddr *)&ca, sizeof(struct sockaddr_in)) == -1){
 		printf("Error in connecting to server with IP address: %s and with port number: %d\n", ip_address, port_number);
 		disconnect();
-		return;
+		return 1;
 	}
-	printf("Success in connecting to server with IP address: %s and with port number: %d, if you would like to disconnect type: \"DISCONNECT\"\n\n", ip_address, port_number);
-	FD_SET(cfd, &all_sockets);
 	
+	unsigned char message[6] = "hello";
+	unsigned char *pub_buf = NULL;
+	int public_key_length = i2d_PUBKEY(your_public_key, &pub_buf); // DER encode
+
+	if (public_key_length <= 0) {
+		disconnect();
+		perror("Failed to encode public key");
+		return 1;
+	}
+
+	uint32_t total_length = htonl(sizeof(message) + public_key_length);		//handshake algo
+	write(cfd, &total_length, sizeof(total_length));
+	write(cfd, message, sizeof(message));
+	write(cfd, pub_buf, public_key_length);
+	OPENSSL_free(pub_buf);
+	
+	uint32_t length_of_data;
+	unsigned char data_sent[4096];
+	unsigned char first_5_characters_and_null[6];
+	read(cfd, &length_of_data, sizeof(length_of_data));
+	read(cfd, first_5_characters_and_null, sizeof(first_5_characters_and_null));
+	if (strcmp(first_5_characters_and_null, "hello") != 0){
+		perror("handshake algo went bad");
+		disconnect();
+		return 1;
+	}
+	
+	int client_pub_len = length_of_data - sizeof(first_5_characters_and_null);
+    unsigned char *client_pub_buf = malloc(client_pub_len);
+    if (!client_pub_buf) {
+        perror("malloc failed");
+        disconnect();
+        return 1;
+    }
+
+    read(cfd, client_pub_buf, client_pub_len);
+
+    const unsigned char *p = client_pub_buf;
+    their_public_key = d2i_PUBKEY(NULL, &p, client_pub_len);
+    free(client_pub_buf);
+    if (!their_public_key) {
+        perror("Failed to decode client public key");
+        disconnect();
+        return 1;
+    }
+	
+	uint32_t length_encrypted_symmetric_key;
+	read(cfd, &length_encrypted_symmetric_key, sizeof(length_encrypted_symmetric_key));
+	unsigned char encrypted_symmetric_key[length_encrypted_symmetric_key];
+	read(cfd, encrypted_symmetric_key, length_encrypted_symmetric_key);
+	int temp;
+	asymmetric_decrypt(your_private_key, encrypted_symmetric_key, length_encrypted_symmetric_key, &session_key, &temp);
+	printf("Success in connecting to server with IP address: %s and with port number: %d, If you would like to disconnect type: \"DISCONNECT\"\n\n", ip_address, port_number);
+	FD_SET(cfd, &all_sockets);
+	return 0;
 }
 
 void write_to_client(){           //helper function to write to our client  
-    char message[1024];
+    unsigned char message[1024];
+	unsigned char encrypted_message[2048];
+	int encrypted_message_length;
     if (fgets(message, sizeof(message), stdin) == NULL){     	//read message from standard input
 		return;
     }
@@ -72,10 +204,21 @@ void write_to_client(){           //helper function to write to our client
 		disconnect();
 		return;
 	}
-	encrypt(message);
-    if (write(cfd, message, strlen(message)) <= 0){			//client has stopped reading
-		disconnect();
+	if (generate_iv(iv, sizeof(iv)) != 0){
+		printf(" Error generating IV for encryption, message not sent\n");
+		return;
 	}
+	
+	if (symmetric_encrypt(message, strlen(message) + 1, encrypted_message, &encrypted_message_length, iv, session_key) != 0){		// also include null terminator
+		printf(" Error symmetricaly encryting message, message not sent\n");
+		return;
+	}
+	uint32_t total_length_message = encrypted_message_length;
+    if (write(cfd, &encrypted_message_length, sizeof(encrypted_message_length)) <= 0 || (write(cfd, iv, sizeof(iv))) <= 0 || (write(cfd, encrypted_message, total_length_message)) <= 0){			//client has stopped reading
+		disconnect();
+		return;
+	}
+	
 }
 
 void handle_input(){
@@ -92,30 +235,30 @@ void handle_input(){
 }
 
 void handle_client_data(){
-	char buffer[1028];   
-	int condition = 0;  
-	ssize_t total_bytes = 0;  
-  
-	while(condition == 0){  
-		ssize_t bytes = read(cfd, &buffer[total_bytes], sizeof(buffer) - total_bytes);    //read whatever client wants to send  
-		if (bytes <= 0 || bytes > client_request_limit || total_bytes > client_request_limit){       //naughty client trying to send more than 100 bytes or has closed on their end  
-			disconnect();		//disconnect
-			return;
-		}  
-		total_bytes = total_bytes + bytes;  
-		buffer[total_bytes] = 0;                //null terminate our buffer as we will use string methods later on it  
-		if (buffer[total_bytes - 1] == '\n'){           //last byte read has to be newline for us to know they have finished their request  
-			condition = 1;  
-		}  
-	}
+	unsigned char message[1028];
+	int message_length;
+	unsigned char encrypted_message[2048];
+	int encrypted_message_length;
 	
-	//decrypt whatever request client sent  
-	decrypt(buffer);	
+	if (read(cfd, &encrypted_message_length, sizeof(encrypted_message_length)) <=0 || read(cfd, iv, sizeof(iv)) <=0 || read(cfd, encrypted_message, encrypted_message_length) <= 0){
+		disconnect();
+		return;
+	}
+	if (symmetric_decrypt(message, &message_length, encrypted_message, encrypted_message_length, iv, session_key) != 0){
+		printf(" Error symmetricaly decrypting message, ask peer to resend message\n");
+		return;
+	}
+	printf("PEER: %s", message);
 	
 }
 
   
 int main(int argc, char **argv){
+	OPENSSL_init_ssl(0, NULL);
+	if (generate_key_pair(&your_public_key, &your_private_key) !=0){
+		return 1;
+	}
+	
 	cfd = -1;
 
 	if (argc < 2){  
