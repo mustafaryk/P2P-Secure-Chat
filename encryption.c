@@ -60,32 +60,32 @@ int asymmetric_encrypt(EVP_PKEY* public_key, unsigned char* plain_text, int plai
 	
 	EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new(public_key, NULL);
     if (!ctx){
-		perror("Unable to allocate memory for context");
+		fprintf(stderr, "Unable to allocate memory for context");
 		return 1;
 	}
 
     if (EVP_PKEY_encrypt_init(ctx) <= 0){
 		EVP_PKEY_CTX_free(ctx);
-		perror("Unable to create a context for encryption");
+		fprintf(stderr, "Unable to create a context for encryption");
 		return 1;
 	}
 
     if (EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_OAEP_PADDING) <= 0){
 		EVP_PKEY_CTX_free(ctx);
-		perror("Unable to assign padding for encyption context");
+		fprintf(stderr, "Unable to assign padding for encyption context");
 		return 1;
 	}
 	
     
     if (EVP_PKEY_encrypt(ctx, NULL, (size_t*)cipher_text_length, plain_text, plain_text_length) <= 0){
 		EVP_PKEY_CTX_free(ctx);
-		perror("Unable to find required buffer size");
+		fprintf(stderr, "Unable to find required buffer size");
 		return 1;
 	}
 
     *cipher_text = malloc(*cipher_text_length);
     if (!*cipher_text){
-		perror("Unable to allocate memory for cipher text");
+		fprintf(stderr, "Unable to allocate memory for cipher text");
 		EVP_PKEY_CTX_free(ctx);
 		return 1;
 	}
@@ -93,7 +93,7 @@ int asymmetric_encrypt(EVP_PKEY* public_key, unsigned char* plain_text, int plai
     if (EVP_PKEY_encrypt(ctx, *cipher_text, (size_t*)cipher_text_length, plain_text, plain_text_length) <= 0){
 		EVP_PKEY_CTX_free(ctx);
 		free(*cipher_text);
-		perror("Unable to encrypt plain text");
+		fprintf(stderr, "Unable to encrypt plain text");
 		return 1;
 	}
 
@@ -105,31 +105,31 @@ int asymmetric_encrypt(EVP_PKEY* public_key, unsigned char* plain_text, int plai
 int asymmetric_decrypt(EVP_PKEY *private_key, unsigned char *ciphertext, int ciphertext_len, unsigned char **plaintext, int *plaintext_len){
     EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new(private_key, NULL);
     if (!ctx){
-		perror("Unable to allocate memory for context");
+		fprintf(stderr, "Unable to allocate memory for context");
 		return 1;
 	}
 
     if (EVP_PKEY_decrypt_init(ctx) <= 0){
 		EVP_PKEY_CTX_free(ctx);
-		perror("Unable to create a context for decryption");
+		fprintf(stderr, "Unable to create a context for decryption");
 		return 1;
 	}
 
     if (EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_OAEP_PADDING) <= 0){
 		EVP_PKEY_CTX_free(ctx);
-		perror("Unable to assign padding for decryption context");
+		fprintf(stderr, "Unable to assign padding for decryption context");
 		return 1;
 	}
 
     if (EVP_PKEY_decrypt(ctx, NULL, (size_t*)plaintext_len, ciphertext, ciphertext_len) <= 0){
 		EVP_PKEY_CTX_free(ctx);
-		perror("Unable to find required buffer size");
+		fprintf(stderr, "Unable to find required buffer size");
 		return 1;
 	}
 
     *plaintext = malloc(*plaintext_len);
     if (!*plaintext){
-		perror("Unable to allocate memory for plain text");
+		fprintf(stderr, "Unable to allocate memory for plain text");
 		EVP_PKEY_CTX_free(ctx);
 		return 1;
 	}
@@ -137,7 +137,7 @@ int asymmetric_decrypt(EVP_PKEY *private_key, unsigned char *ciphertext, int cip
     if (EVP_PKEY_decrypt(ctx, *plaintext, (size_t*)plaintext_len, ciphertext, ciphertext_len) <= 0){
 		EVP_PKEY_CTX_free(ctx);
 		free(*plaintext);
-		perror("Unable to decrypt plain text");
+		fprintf(stderr, "Unable to decrypt plain text");
 		return 1;
 	}
 
@@ -152,7 +152,7 @@ void free_key_pair(EVP_PKEY* public_key, EVP_PKEY* private_key){
 
 int make_symmetric_key(unsigned char* key, int key_size){
 	if (RAND_bytes(key, key_size) !=1){
-		perror("error generating key");
+		fprintf(stderr, "error generating key");
 		return 1;
 	}
 	return 0;
@@ -160,7 +160,7 @@ int make_symmetric_key(unsigned char* key, int key_size){
 
 int generate_iv(unsigned char* iv, int iv_length){
 	if (RAND_bytes(iv, iv_length) !=1){
-		perror("error generating iv");
+		fprintf(stderr, "error generating iv");
 		return 1;
 	}
 	return 0;
@@ -171,7 +171,7 @@ int symmetric_encrypt(unsigned char* plain_text, int plain_text_length, unsigned
 	EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
 	int len;
 	if (!ctx){
-		perror("error creating context");
+		fprintf(stderr, "error creating context");
 		return 1;
 	}
 	EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key, iv);
@@ -191,7 +191,7 @@ int symmetric_decrypt(unsigned char* plain_text, int* plain_text_length, unsigne
 	EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
 	int len;
 	if (!ctx){
-		perror("error creating context");
+		fprintf(stderr, "error creating context");
 		return 1;
 	}
 	EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key, iv);
