@@ -9,8 +9,7 @@
 int generate_key_pair(EVP_PKEY **public_key, EVP_PKEY **private_key) {
     EVP_PKEY_CTX *ctx = NULL;
     EVP_PKEY *pkey = NULL;
-
-    // 1. Create context for RSA key generation
+	
     ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL);
     if (!ctx) {
         fprintf(stderr, "EVP_PKEY_CTX_new_id failed\n");
@@ -29,7 +28,6 @@ int generate_key_pair(EVP_PKEY **public_key, EVP_PKEY **private_key) {
         return 1;
     }
 
-    // 2. Generate key pair
     if (EVP_PKEY_keygen(ctx, &pkey) <= 0) {
         fprintf(stderr, "EVP_PKEY_keygen failed\n");
         EVP_PKEY_CTX_free(ctx);
@@ -38,10 +36,8 @@ int generate_key_pair(EVP_PKEY **public_key, EVP_PKEY **private_key) {
 
     EVP_PKEY_CTX_free(ctx);
 
-    // 3. Assign keys
     *private_key = pkey;
 
-    // Extract public key
 	unsigned char *pub_buf = NULL;
 	int pub_len = i2d_PUBKEY(pkey, &pub_buf);  // DER encode public key
 	const unsigned char *p = pub_buf;
